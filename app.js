@@ -1,18 +1,5 @@
-const books = [
-  { id: "quiet", title: "The Quiet Hours", author: "Mara Ellison", category: "Fiction", price: 18.00, rating: "4.9", reviews: 128, badge: "Reader favorite", cover: "cover-cream", coverTitle: "The quiet<br>hours", kicker: "A novel", color: "#d9c8a9" },
-  { id: "wild", title: "A Wilder Mind", author: "Theo Bennett", category: "Mindful living", price: 21.00, rating: "4.8", reviews: 96, badge: "New", cover: "cover-sun", coverTitle: "A wilder<br>mind", kicker: "Find your way", color: "#d99265" },
-  { id: "ordinary", title: "Ordinary Wonder", author: "Lena Hart", category: "Poetry", price: 16.50, rating: "5.0", reviews: 74, badge: "", cover: "cover-bloom", coverTitle: "Ordinary<br>wonder", kicker: "Small poems", color: "#b7ad88" },
-  { id: "somewhere", title: "Somewhere, Slowly", author: "June Park", category: "Fiction", price: 19.00, rating: "4.7", reviews: 112, badge: "Bestseller", cover: "cover-sky", coverTitle: "Somewhere,<br>slowly", kicker: "A novel", color: "#718b91" },
-  { id: "gather", title: "The Art of Gathering", author: "Nina Rowan", category: "Nonfiction", price: 24.00, rating: "4.9", reviews: 205, badge: "", cover: "cover-berry", coverTitle: "The art of<br>gathering", kicker: "Make room", color: "#866b78" },
-  { id: "small", title: "Small Things, Slowly", author: "Ada Wells", category: "Mindful living", price: 20.00, rating: "4.8", reviews: 87, badge: "", cover: "cover-leaf", coverTitle: "Small things,<br>slowly", kicker: "A gentle guide", color: "#657f68" },
-  { id: "blue", title: "The Blue Between", author: "Elliot James", category: "Fiction", price: 17.50, rating: "4.9", reviews: 143, badge: "", cover: "cover-dark", coverTitle: "The blue<br>between", kicker: "A novel", color: "#454e49" },
-  { id: "soft", title: "A Soft Place to Land", author: "Mina Flores", category: "Poetry", price: 15.00, rating: "4.8", reviews: 61, badge: "", cover: "cover-pink", coverTitle: "A soft place<br>to land", kicker: "Poems for us", color: "#d9a69a" }
-];
-
-const CART_STORAGE_KEY = "chapter-co-cart";
-const CHECKOUT_DETAILS_STORAGE_KEY = "chapter-co-checkout-details";
 const MAX_QUANTITY = 10;
-const ZAR_PER_USD = 18.5;
+const products = [];
 const bookGrid = document.querySelector("#book-grid");
 const emptyState = document.querySelector("#empty-state");
 const searchInput = document.querySelector("#book-search");
@@ -21,231 +8,236 @@ const cartItemsElement = document.querySelector("#cart-items");
 const cartEmpty = document.querySelector("#cart-empty");
 const cartFooter = document.querySelector("#cart-footer");
 const toast = document.querySelector("#toast");
-const checkoutScreen = document.querySelector("#checkout-screen");
-const cartTitle = document.querySelector("#cart-title");
-const shippingSection = document.querySelector("#shipping-section");
-const paymentSection = document.querySelector("#payment-section");
-const orderSuccess = document.querySelector("#order-success");
-const restoredCheckoutDetails = loadCheckoutDetails();
-for (const [field, value] of Object.entries(restoredCheckoutDetails)) {
-  const input = document.querySelector("#shipping-form").elements.namedItem(field);
-  if (input && typeof value === "string" && "value" in input) input.value = value;
-}
-
+const categoryRow = document.querySelector(".category-row");
 let activeCategory = "All";
-let cart = loadCart();
-let checkoutDetails = null;
+let cart = null;
 let toastTimer;
+let cartMutationQueue = Promise.resolve();
 
-function usdToZarCents(usdAmount) {
-  return Math.round(Math.round(usdAmount * 100) * ZAR_PER_USD);
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
 }
 
-function formatZarCents(cents) {
-  return new Intl.NumberFormat("en-ZA", {
+function formatMoney(money) {
+  const amount = Number(money?.amount);
+  if (!Number.isFinite(amount) || !money.currencyCode) return "";
+  return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency: "ZAR",
-  }).format(cents / 100);
+    currency: money.currencyCode,
+  }).format(amount);
 }
 
-function formatUsdAmountAsZar(usdAmount) {
-  return formatZarCents(usdToZarCents(usdAmount));
-}
-
-function loadCart() {
-  const savedCart = sessionStorage.getItem(CART_STORAGE_KEY);
-  if (!savedCart) return {};
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
+  });
+  let result;
   try {
-    const parsedCart = JSON.parse(savedCart);
-    if (!parsedCart || typeof parsedCart !== "object" || Array.isArray(parsedCart)) return {};
-    return Object.fromEntries(Object.entries(parsedCart).filter(([id, quantity]) =>
-      books.some((book) => book.id === id) &&
-      Number.isInteger(quantity) &&
-      quantity > 0 &&
-      quantity <= MAX_QUANTITY
-    ));
+    result = await response.json();
   } catch (error) {
     if (error instanceof SyntaxError) {
-      console.error("Could not restore the saved shopping bag:", error);
-      return {};
+      throw new Error(`The storefront returned an invalid response (HTTP ${response.status}).`);
     }
     throw error;
   }
+  if (!response.ok) {
+    throw new Error(result.error || `The request failed (HTTP ${response.status}).`);
+  }
+  return result;
 }
 
-function saveCart() {
-  sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-}
-
-function loadCheckoutDetails() {
-  const savedDetails = sessionStorage.getItem(CHECKOUT_DETAILS_STORAGE_KEY);
-  if (!savedDetails) return {};
+function safeImageUrl(image) {
+  if (!image?.url) return "";
   try {
-    const parsedDetails = JSON.parse(savedDetails);
-    return parsedDetails && typeof parsedDetails === "object" && !Array.isArray(parsedDetails)
-      ? parsedDetails
-      : {};
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      console.error("Could not restore saved checkout details:", error);
-      return {};
-    }
-    throw error;
+    const url = new URL(image.url);
+    return url.protocol === "https:" && url.hostname === "cdn.shopify.com"
+      ? url.href
+      : "";
+  } catch {
+    return "";
   }
 }
 
-function renderBooks() {
+function productCategory(product) {
+  return product.productType?.trim() || product.tags?.[0] || "Books";
+}
+
+function availableVariant(product) {
+  return product.variants.nodes.find((variant) => variant.availableForSale);
+}
+
+function renderCategories() {
+  const categories = [...new Set(products.map(productCategory))]
+    .filter((category) => category && category !== "All")
+    .sort((left, right) => left.localeCompare(right));
+  categoryRow.innerHTML = [
+    `<button class="category-chip${activeCategory === "All" ? " active" : ""}" type="button" data-category="All" aria-pressed="${activeCategory === "All"}">All books <span>${products.length.toString().padStart(2, "0")}</span></button>`,
+    ...categories.map((category) => `<button class="category-chip${activeCategory === category ? " active" : ""}" type="button" data-category="${escapeHtml(category)}" aria-pressed="${activeCategory === category}">${escapeHtml(category)}</button>`),
+  ].join("");
+}
+
+function renderBooks(message) {
   const searchTerm = searchInput.value.trim().toLowerCase();
-  const visibleBooks = books.filter((book) => {
-    const matchesCategory = activeCategory === "All" || book.category === activeCategory;
-    const matchesSearch = `${book.title} ${book.author} ${book.category}`.toLowerCase().includes(searchTerm);
-    return matchesCategory && matchesSearch;
+  const visibleProducts = products.filter((product) => {
+    const matchesCategory = activeCategory === "All" || productCategory(product) === activeCategory;
+    const searchableText = `${product.title} ${product.vendor || ""} ${productCategory(product)} ${product.description || ""}`;
+    return matchesCategory && searchableText.toLowerCase().includes(searchTerm);
   });
 
-  bookGrid.innerHTML = visibleBooks.map((book) => `
-    <article class="book-card">
-      <div class="book-cover-wrap">
-        ${book.badge ? `<span class="book-badge">${book.badge}</span>` : ""}
-        <div class="book-cover ${book.cover}" style="--cover:${book.color}">
-          <span class="cover-kicker">${book.kicker}</span>
-          <span class="cover-shape" aria-hidden="true"></span>
-          <span class="cover-title">${book.coverTitle}</span>
-          <span class="cover-author">${book.author}</span>
+  bookGrid.innerHTML = visibleProducts.map((product) => {
+    const variant = availableVariant(product);
+    const price = formatMoney(variant?.price || product.priceRange.minVariantPrice);
+    const imageUrl = safeImageUrl(product.featuredImage);
+    const image = imageUrl
+      ? `<img class="book-cover-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(product.featuredImage.altText || product.title)}" loading="lazy" />`
+      : `<div class="book-cover"><span class="cover-kicker">${escapeHtml(product.vendor || "Chapter & Co.")}</span><span class="cover-shape" aria-hidden="true"></span><span class="cover-title">${escapeHtml(product.title)}</span><span class="cover-author">${escapeHtml(product.vendor || "")}</span></div>`;
+    const addButton = variant
+      ? `<button class="quick-add" type="button" data-add="${escapeHtml(variant.id)}" data-title="${escapeHtml(product.title)}" aria-label="Add ${escapeHtml(product.title)} to bag">Add to bag — ${escapeHtml(price)}</button>`
+      : `<button class="quick-add" type="button" disabled>Sold out</button>`;
+
+    return `
+      <article class="book-card">
+        <div class="book-cover-wrap">
+          ${image}
+          ${addButton}
         </div>
-        <button class="quick-add" type="button" data-add="${book.id}" aria-label="Add ${book.title} to bag">Add to bag — ${formatUsdAmountAsZar(book.price)}</button>
-      </div>
-      <div class="book-info">
-        <span class="book-category">${book.category}</span>
-        <h3>${book.title}</h3>
-        <p class="book-author">by ${book.author}</p>
-        <div class="book-meta">
-          <span class="book-rating" aria-label="${book.rating} out of 5 stars">★ <span>${book.rating} (${book.reviews})</span></span>
-          <span class="book-price">${formatUsdAmountAsZar(book.price)}</span>
+        <div class="book-info">
+          <span class="book-category">${escapeHtml(productCategory(product))}</span>
+          <h3>${escapeHtml(product.title)}</h3>
+          ${product.vendor ? `<p class="book-author">by ${escapeHtml(product.vendor)}</p>` : ""}
+          <div class="book-meta">
+            <span class="book-price">${escapeHtml(price)}</span>
+          </div>
         </div>
-      </div>
-    </article>
-  `).join("");
-  emptyState.hidden = visibleBooks.length > 0;
-}
+      </article>
+    `;
+  }).join("");
 
-function cartQuantity() {
-  return Object.values(cart).reduce((total, quantity) => total + quantity, 0);
-}
-
-function addToCart(bookId) {
-  if ((cart[bookId] || 0) >= MAX_QUANTITY) {
-    showToast(`You can add up to ${MAX_QUANTITY} copies of each book`);
-    return;
-  }
-  cart[bookId] = (cart[bookId] || 0) + 1;
-  saveCart();
-  renderCart();
-  showToast(`${books.find((book) => book.id === bookId).title} added to your bag`);
-}
-
-function changeQuantity(bookId, amount) {
-  cart[bookId] = Math.min(MAX_QUANTITY, (cart[bookId] || 0) + amount);
-  if (cart[bookId] <= 0) delete cart[bookId];
-  saveCart();
-  renderCart();
+  emptyState.textContent = message || (products.length === 0
+    ? "Our shelves are being stocked. Please check back soon."
+    : "No books found. Try another search.");
+  emptyState.hidden = visibleProducts.length > 0;
 }
 
 function renderCart() {
-  const quantity = cartQuantity();
+  const lines = cart?.lines.nodes || [];
+  const quantity = cart?.totalQuantity || 0;
   document.querySelector("#cart-count").textContent = quantity;
   document.querySelector("#cart-item-label").textContent = `(${quantity})`;
-
-  const entries = books.filter((book) => cart[book.id]);
-  cartItemsElement.innerHTML = entries.map((book) => `
-    <article class="cart-item">
-      <div class="cart-item-cover" style="--cover:${book.color}">${book.coverTitle}</div>
-      <div class="cart-item-details">
-        <h3>${book.title}</h3>
-        <p>${book.author}</p>
-        <div class="quantity-control" aria-label="Quantity for ${book.title}">
-          <button type="button" data-quantity="${book.id}" data-change="-1" aria-label="Remove one ${book.title}">−</button>
-          <span>${cart[book.id]}</span>
-          <button type="button" data-quantity="${book.id}" data-change="1" aria-label="Add one ${book.title}" ${cart[book.id] >= MAX_QUANTITY ? "disabled" : ""}>+</button>
+  cartItemsElement.innerHTML = lines.map((line) => {
+    const imageUrl = safeImageUrl(line.merchandise.image);
+    const cover = imageUrl
+      ? `<img class="cart-item-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(line.merchandise.image.altText || line.merchandise.product.title)}" loading="lazy" />`
+      : `<div class="cart-item-cover">${escapeHtml(line.merchandise.product.title)}</div>`;
+    const lineTotal = formatMoney(line.cost.totalAmount);
+    return `
+      <article class="cart-item">
+        ${cover}
+        <div class="cart-item-details">
+          <h3>${escapeHtml(line.merchandise.product.title)}</h3>
+          ${line.merchandise.title !== "Default Title" ? `<p>${escapeHtml(line.merchandise.title)}</p>` : ""}
+          <div class="quantity-control" aria-label="Quantity for ${escapeHtml(line.merchandise.product.title)}">
+            <button type="button" data-quantity="${escapeHtml(line.id)}" data-change="-1" aria-label="Remove one">−</button>
+            <span>${line.quantity}</span>
+            <button type="button" data-quantity="${escapeHtml(line.id)}" data-change="1" aria-label="Add one" ${line.quantity >= MAX_QUANTITY ? "disabled" : ""}>+</button>
+          </div>
         </div>
-      </div>
-      <span class="cart-item-price">${formatZarCents(usdToZarCents(book.price) * cart[book.id])}</span>
-    </article>
-  `).join("");
+        <span class="cart-item-price">${escapeHtml(lineTotal)}</span>
+      </article>
+    `;
+  }).join("");
 
-  const subtotal = entries.reduce((sum, book) => sum + book.price * cart[book.id], 0);
-  document.querySelector("#cart-subtotal").textContent = formatZarCents(
-    entries.reduce((sum, book) => sum + usdToZarCents(book.price) * cart[book.id], 0),
-  );
-  const remaining = Math.max(0, 40 - subtotal);
-  document.querySelector("#shipping-note").textContent = remaining === 0
-    ? "You've unlocked free shipping. Happy reading!"
-    : `You're ${formatUsdAmountAsZar(remaining)} away from free shipping.`;
+  document.querySelector("#cart-subtotal").textContent =
+    formatMoney(cart?.cost.subtotalAmount) || formatMoney({ amount: "0", currencyCode: "ZAR" });
   cartEmpty.classList.toggle("visible", quantity === 0);
   cartFooter.classList.toggle("empty", quantity === 0);
+  document.querySelector("#checkout-button").disabled = quantity === 0;
 }
 
-function showCartView() {
-  checkoutScreen.hidden = true;
-  cartItemsElement.hidden = false;
-  cartEmpty.hidden = false;
-  cartFooter.hidden = false;
-  cartTitle.firstChild.textContent = "Your bag ";
+async function loadProducts() {
+  try {
+    const result = await apiRequest("/api/products");
+    products.splice(0, products.length, ...result.products);
+    renderCategories();
+    renderBooks();
+  } catch (error) {
+    console.error("Could not load Shopify products:", error);
+    renderBooks(error.message);
+  }
 }
 
-function showCheckoutStep(step) {
-  checkoutScreen.hidden = false;
-  cartItemsElement.hidden = true;
-  cartEmpty.hidden = true;
-  cartFooter.hidden = true;
-  cartTitle.firstChild.textContent = "Checkout ";
-  shippingSection.hidden = step !== "shipping";
-  paymentSection.hidden = step !== "payment";
-  orderSuccess.hidden = step !== "success";
-  document.querySelector("#shipping-step").classList.toggle("active", step === "shipping");
-  document.querySelector("#payment-step").classList.toggle("active", step === "payment");
-  document.querySelector("#shipping-step").hidden = step === "success";
-  document.querySelector("#payment-step").hidden = step === "success";
+async function refreshCart() {
+  const result = await apiRequest("/api/cart");
+  cart = result.cart;
+  renderCart();
 }
 
-function renderPaymentSummary() {
-  const formData = new FormData(document.querySelector("#shipping-form"));
-  checkoutDetails = Object.fromEntries(formData.entries());
-  sessionStorage.setItem(CHECKOUT_DETAILS_STORAGE_KEY, JSON.stringify(checkoutDetails));
-  const review = document.querySelector("#shipping-review");
-  review.replaceChildren();
-  const name = document.createElement("strong");
-  name.textContent = checkoutDetails.name;
-  const address = document.createElement("div");
-  const countryLabel = document.querySelector("#shipping-form [name='country'] option:checked").textContent;
-  address.textContent = `${checkoutDetails.address}, ${checkoutDetails.city} ${checkoutDetails.zip}, ${countryLabel}`;
-  const email = document.createElement("div");
-  email.textContent = checkoutDetails.email;
-  review.append(name, address, email);
+async function addToCart(merchandiseId, title) {
+  const addRequest = cartMutationQueue.then(() => apiRequest("/api/cart/lines", {
+    method: "POST",
+    body: JSON.stringify({ merchandiseId, quantity: 1 }),
+  }));
+  cartMutationQueue = addRequest.catch(() => {});
+  try {
+    const result = await addRequest;
+    cart = result.cart;
+    renderCart();
+    showToast(`${title} added to your bag`);
+  } catch (error) {
+    console.error("Could not add Shopify product to cart:", error);
+    showToast(error.message);
+  }
+}
 
-  const entries = books.filter((book) => cart[book.id]);
-  const subtotal = entries.reduce((sum, book) => sum + book.price * cart[book.id], 0);
-  const shipping = subtotal >= 40 ? 0 : 4.95;
-  const summary = document.querySelector("#order-summary");
-  summary.innerHTML = `
-    <h4>Your books</h4>
-    ${entries.map((book) => `<div class="summary-item"><span>${book.title} × ${cart[book.id]}</span><span>${formatZarCents(usdToZarCents(book.price) * cart[book.id])}</span></div>`).join("")}
-    <div class="summary-item"><span>Shipping</span><span>${shipping === 0 ? "Free" : formatUsdAmountAsZar(shipping)}</span></div>
-    <div class="summary-total"><span>Total</span><span>${formatZarCents(entries.reduce((sum, book) => sum + usdToZarCents(book.price) * cart[book.id], 0) + usdToZarCents(shipping))}</span></div>
-  `;
+async function changeQuantity(lineId, change) {
+  const line = cart?.lines.nodes.find((item) => item.id === lineId);
+  if (!line) return;
+  const quantity = line.quantity + change;
+  if (quantity > MAX_QUANTITY) {
+    showToast(`You can add up to ${MAX_QUANTITY} copies of each book`);
+    return;
+  }
+  try {
+    const result = await apiRequest("/api/cart/lines", {
+      method: "PATCH",
+      body: JSON.stringify({ id: lineId, quantity }),
+    });
+    cart = result.cart;
+    renderCart();
+  } catch (error) {
+    console.error("Could not update Shopify cart:", error);
+    showToast(error.message);
+  }
 }
 
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove("show"), 2400);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 2800);
 }
 
-function openCart() {
-  showCartView();
+async function openCart() {
   cartOverlay.hidden = false;
-  document.querySelector("#close-cart").focus();
   document.body.style.overflow = "hidden";
+  document.querySelector("#close-cart").focus();
+  try {
+    await refreshCart();
+  } catch (error) {
+    console.error("Could not load Shopify cart:", error);
+    showToast(error.message);
+  }
 }
 
 function closeCart() {
@@ -254,137 +246,11 @@ function closeCart() {
   document.querySelector("#open-cart").focus();
 }
 
-function showPaymentError(message) {
-  const error = document.querySelector("#payment-error");
-  error.textContent = message;
-  error.hidden = false;
-}
-
-async function readApiResponse(response, action) {
-  const body = await response.text();
-  if (!body.trim()) {
-    throw new Error(`${action} returned an empty response (HTTP ${response.status}). Make sure the Node backend is running with npm.cmd start.`);
-  }
-  try {
-    return JSON.parse(body);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error(`${action} returned an invalid response (HTTP ${response.status}). Open the site served by the Node backend at http://localhost:8765.`);
-    }
-    throw error;
-  }
-}
-
-async function beginPayment() {
-  const button = document.querySelector("#payment-submit");
-  const error = document.querySelector("#payment-error");
-  error.hidden = true;
-  button.disabled = true;
-  button.textContent = "Connecting to secure checkout…";
-  try {
-    const response = await fetch("/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: checkoutDetails.email,
-        items: Object.entries(cart).map(([id, quantity]) => ({ id, quantity })),
-        shippingAddress: {
-          name: checkoutDetails.name,
-          address: checkoutDetails.address,
-          city: checkoutDetails.city,
-          zip: checkoutDetails.zip,
-          country: checkoutDetails.country,
-        },
-      }),
-    });
-    const result = await readApiResponse(response, "Payment setup");
-    if (!response.ok) {
-      showPaymentError(result.error || "We couldn't start checkout. Please try again.");
-      return;
-    }
-    const checkoutUrl = new URL(result.checkoutUrl);
-    if (checkoutUrl.origin !== "https://checkout.paystack.com") {
-      throw new Error("The payment provider returned an invalid checkout link.");
-    }
-    window.location.assign(checkoutUrl.href);
-  } catch (error) {
-    console.error("Could not start Paystack checkout:", error);
-    showPaymentError(error instanceof TypeError
-      ? "We couldn't connect to secure checkout. Please try again."
-      : error.message);
-  } finally {
-    button.disabled = false;
-    button.innerHTML = 'Continue to secure payment <span aria-hidden="true">→</span>';
-  }
-}
-
-async function handleCheckoutReturn() {
-  const params = new URLSearchParams(window.location.search);
-  const checkoutState = params.get("checkout");
-  if (checkoutState !== "paystack") return;
-
-  openCart();
-  checkoutDetails = loadCheckoutDetails();
-  const reference = params.get("reference") || params.get("trxref");
-  if (reference) {
-    showCheckoutStep("success");
-    document.querySelector("#confirmation-message").textContent = "Confirming your payment…";
-    try {
-      const response = await fetch(`/api/transactions/${encodeURIComponent(reference)}`);
-      const result = await readApiResponse(response, "Payment verification");
-      if (!response.ok) {
-        throw new Error(result.error || "We couldn't confirm your payment yet.");
-      }
-      if (result.paymentStatus !== "paid") {
-        if (checkoutDetails.email) {
-          showCheckoutStep("payment");
-          const paymentMessage = result.paymentStatus === "pending"
-            ? "Paystack hasn't confirmed a final payment status yet."
-            : `Paystack reports the payment as ${result.paymentStatus}.`;
-          const emailMessage = result.emailStatus === "sent"
-            ? " A status email was sent to your checkout address."
-            : result.emailStatus === "failed"
-              ? " We couldn't send the status email; please contact the shop."
-              : "";
-          showPaymentError(`${paymentMessage}${emailMessage} Your bag is saved if you'd like to try again.`);
-        } else {
-          showCheckoutStep("shipping");
-        }
-      } else {
-        const orderReference = result.orderId ? ` Order ${result.orderId}.` : "";
-        document.querySelector("#confirmation-message").textContent =
-          `Thanks${result.customerName ? `, ${result.customerName}` : ""}! Your payment is confirmed.${orderReference}`;
-        document.querySelector("#order-success-note").textContent = result.emailStatus === "sent"
-          ? `Your payment was processed securely by Paystack. A status email was sent to ${checkoutDetails.email}.`
-          : "Your payment was processed securely by Paystack, but we couldn't send the status email. Please contact the shop.";
-        cart = {};
-        sessionStorage.removeItem(CHECKOUT_DETAILS_STORAGE_KEY);
-        saveCart();
-        renderCart();
-      }
-    } catch (error) {
-      console.error("Could not confirm Paystack transaction:", error);
-      if (checkoutDetails.email) {
-        showCheckoutStep("payment");
-        showPaymentError(error.message);
-      } else {
-        showCheckoutStep("shipping");
-      }
-    }
-  } else if (checkoutDetails.email) {
-    showCheckoutStep("payment");
-    showPaymentError("We couldn't verify the payment reference. Your bag is still here if you'd like to retry.");
-  } else {
-    showCheckoutStep("shipping");
-  }
-  window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
-}
-
-document.querySelector(".category-row").addEventListener("click", (event) => {
+categoryRow.addEventListener("click", (event) => {
   const button = event.target.closest("[data-category]");
   if (!button) return;
   activeCategory = button.dataset.category;
-  document.querySelectorAll(".category-chip").forEach((chip) => {
+  categoryRow.querySelectorAll(".category-chip").forEach((chip) => {
     const selected = chip === button;
     chip.classList.toggle("active", selected);
     chip.setAttribute("aria-pressed", String(selected));
@@ -394,7 +260,7 @@ document.querySelector(".category-row").addEventListener("click", (event) => {
 
 bookGrid.addEventListener("click", (event) => {
   const button = event.target.closest("[data-add]");
-  if (button) addToCart(button.dataset.add);
+  if (button) addToCart(button.dataset.add, button.dataset.title);
 });
 
 cartItemsElement.addEventListener("click", (event) => {
@@ -408,17 +274,7 @@ document.querySelector(".overlay-dismiss").addEventListener("click", closeCart);
 document.querySelector("#continue-shopping").addEventListener("click", closeCart);
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  if (!cartOverlay.hidden) {
-    closeCart();
-    return;
-  }
-  const searchBox = document.querySelector("#search-box");
-  if (searchBox.classList.contains("search-open")) {
-    searchBox.classList.remove("search-open");
-    document.querySelector("#search-toggle").setAttribute("aria-expanded", "false");
-    document.querySelector("#search-toggle").focus();
-  }
+  if (event.key === "Escape" && !cartOverlay.hidden) closeCart();
 });
 
 document.querySelector("#search-toggle").addEventListener("click", () => {
@@ -440,45 +296,32 @@ searchInput.addEventListener("input", () => {
 });
 
 document.querySelector("#checkout-button").addEventListener("click", () => {
-  if (cartQuantity() === 0) return;
-  showCheckoutStep("shipping");
-  document.querySelector("#shipping-form input[name='email']").focus();
-});
-
-document.querySelector("#shipping-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  renderPaymentSummary();
-  showCheckoutStep("payment");
-  document.querySelector("#payment-submit").focus();
-});
-
-document.querySelector("#payment-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  beginPayment();
-});
-
-checkoutScreen.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-checkout-action]");
-  if (!button) return;
-  if (button.dataset.checkoutAction === "bag") {
-    showCartView();
-  } else {
-    showCheckoutStep("shipping");
-    document.querySelector("#shipping-form input[name='email']").focus();
+  if (!cart?.checkoutUrl) return;
+  try {
+    const checkoutUrl = new URL(cart.checkoutUrl);
+    if (checkoutUrl.protocol !== "https:" ||
+        !(checkoutUrl.hostname.endsWith(".myshopify.com") ||
+          checkoutUrl.hostname === "shop.app" ||
+          checkoutUrl.hostname.endsWith(".shopify.com"))) {
+      throw new Error("Shopify returned an unexpected checkout address.");
+    }
+    window.location.assign(checkoutUrl.href);
+  } catch (error) {
+    console.error("Could not open Shopify checkout:", error);
+    showToast(error.message);
   }
-});
-
-document.querySelector("#finish-checkout").addEventListener("click", () => {
-  closeCart();
-  showToast("Thanks for stopping by the bookshop!");
 });
 
 document.querySelector("#newsletter-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  document.querySelector("#newsletter-message").textContent = "You're on the list. Keep an eye on your inbox!";
+  document.querySelector("#newsletter-message").textContent = "Thanks for your interest. The reading list is coming soon.";
   event.currentTarget.reset();
 });
 
-renderBooks();
+renderCategories();
+renderBooks("Loading books…");
 renderCart();
-handleCheckoutReturn();
+loadProducts();
+refreshCart().catch((error) => {
+  console.error("Could not restore Shopify cart:", error);
+});

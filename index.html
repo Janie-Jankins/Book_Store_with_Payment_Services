@@ -19,7 +19,7 @@
   </head>
   <body>
     <div class="announcement">
-      A little something for your next chapter <span>— free shipping on orders R740+</span>
+      A little something for your next chapter <span>— thoughtful reads, chosen for you</span>
     </div>
 
     <header class="site-header">
@@ -66,8 +66,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg>
           </a>
           <div class="reader-note">
-            <div class="reader-avatars" aria-hidden="true"><span>J</span><span>M</span><span>A</span></div>
-            <span>Loved by <strong>12,000+</strong> readers</span>
+            <span>For curious readers, everywhere.</span>
           </div>
         </div>
         <div class="hero-art" aria-label="A cozy stack of books and fresh flowers">
@@ -90,21 +89,17 @@
         <div class="section-heading">
           <div>
             <span class="eyebrow"><span class="eyebrow-line"></span> The good stuff</span>
-            <h2 id="shop-title">Readers are <em>loving</em></h2>
+            <h2 id="shop-title">Find your next <em>favorite</em></h2>
           </div>
           <a class="text-link" href="#bestsellers">Explore all books <span aria-hidden="true">↗</span></a>
         </div>
 
         <div class="category-row" role="group" aria-label="Filter books by category">
-          <button class="category-chip active" type="button" data-category="All">All books <span>08</span></button>
-          <button class="category-chip" type="button" data-category="Fiction">Fiction</button>
-          <button class="category-chip" type="button" data-category="Nonfiction">Nonfiction</button>
-          <button class="category-chip" type="button" data-category="Poetry">Poetry</button>
-          <button class="category-chip" type="button" data-category="Mindful living">Mindful living</button>
+          <button class="category-chip active" type="button" data-category="All" aria-pressed="true">All books</button>
         </div>
 
         <div class="book-grid" id="book-grid" aria-live="polite"></div>
-        <p class="empty-state" id="empty-state" hidden>No books found. Try another search.</p>
+        <p class="empty-state" id="empty-state" role="status">Our catalog is loading. If this message stays, please enable JavaScript and refresh.</p>
       </section>
 
       <section class="story-section" id="story">
@@ -126,7 +121,7 @@
       <section class="newsletter-section" id="newsletter">
         <span class="eyebrow"><span class="eyebrow-line"></span> A letter for your bookshelf</span>
         <h2>Good books. <em>Good inbox.</em></h2>
-        <p>New finds, little stories, and 10% off your first order.</p>
+        <p>New finds, little stories, and notes from the shop.</p>
         <form class="newsletter-form" id="newsletter-form">
           <label class="visually-hidden" for="newsletter-email">Your email address</label>
           <input id="newsletter-email" type="email" placeholder="Your email address" required />
@@ -139,7 +134,7 @@
     <footer class="site-footer">
       <a class="brand footer-brand" href="#"><span class="brand-mark" aria-hidden="true">c.</span><span>chapter <span class="brand-amp">&amp;</span> co.</span></a>
       <span>A little more wonder, one page at a time.</span>
-      <span>© 2025 Chapter &amp; Co.</span>
+      <span>© 2026 Chapter &amp; Co.</span>
     </footer>
 
     <div class="cart-overlay" id="cart-overlay" hidden>
@@ -157,65 +152,11 @@
           <button class="button button-outline" id="continue-shopping" type="button">Find a book</button>
         </div>
         <div class="cart-footer" id="cart-footer">
-          <p class="shipping-note" id="shipping-note"></p>
           <div class="subtotal-row"><span>Subtotal</span><strong id="cart-subtotal">R0.00</strong></div>
-          <p class="shipping-detail">Shipping calculated at checkout.</p>
-          <button class="button button-dark checkout-button" id="checkout-button" type="button">Continue to checkout <span aria-hidden="true">→</span></button>
-          <span class="secure-note">Secure payment powered by Paystack.</span>
+          <p class="shipping-detail">Shipping and payment are handled securely by Shopify.</p>
+          <button class="button button-dark checkout-button" id="checkout-button" type="button">Continue to secure checkout <span aria-hidden="true">→</span></button>
+          <span class="secure-note">Secure checkout powered by Shopify.</span>
         </div>
-        <section class="checkout-screen" id="checkout-screen" hidden aria-label="Checkout">
-          <div class="checkout-steps" aria-label="Checkout progress">
-            <span class="checkout-step active" id="shipping-step">1. Delivery</span>
-            <span class="checkout-step" id="payment-step">2. Payment</span>
-          </div>
-
-          <section id="shipping-section">
-            <button class="checkout-back" type="button" data-checkout-action="bag">← Back to bag</button>
-            <h3 class="checkout-heading">Where should we send your books?</h3>
-            <p class="checkout-intro">Enter your contact and delivery details, then pay securely with Paystack. Prices are converted at R18.50 per US dollar.</p>
-            <form class="checkout-form" id="shipping-form">
-              <label>Full name<input name="name" autocomplete="name" required /></label>
-              <label>Email address<input name="email" type="email" autocomplete="email" required /></label>
-              <label>Street address<input name="address" autocomplete="street-address" required /></label>
-              <div class="checkout-form-row">
-                <label>City<input name="city" autocomplete="address-level2" required /></label>
-                <label>Postal code<input name="zip" autocomplete="postal-code" required /></label>
-              </div>
-              <label>Country
-                <select name="country" autocomplete="country" required>
-                  <option value="">Choose a country</option>
-                  <option value="ZA">South Africa</option>
-                  <option value="US">United States</option>
-                  <option value="CA">Canada</option>
-                  <option value="GB">United Kingdom</option>
-                  <option value="AU">Australia</option>
-                </select>
-              </label>
-              <button class="button button-dark checkout-button" type="submit">Continue to payment <span aria-hidden="true">→</span></button>
-            </form>
-          </section>
-
-          <section id="payment-section" hidden>
-            <button class="checkout-back" type="button" data-checkout-action="shipping">← Edit shipping details</button>
-            <h3 class="checkout-heading">Review your order</h3>
-            <div class="shipping-review" id="shipping-review"></div>
-            <div class="order-summary" id="order-summary"></div>
-            <form id="payment-form">
-              <p class="demo-payment-note">You'll complete payment on Paystack's secure checkout page. Your delivery details are sent with the order.</p>
-              <p class="checkout-error" id="payment-error" role="alert" hidden></p>
-              <button class="button button-dark checkout-button" id="payment-submit" type="submit">Continue to secure payment <span aria-hidden="true">→</span></button>
-            </form>
-          </section>
-
-          <section class="order-success" id="order-success" hidden aria-live="polite">
-            <span class="success-mark" aria-hidden="true">✓</span>
-            <span class="eyebrow">ORDER CONFIRMED</span>
-            <h3 class="checkout-heading">Your next chapter is on its way.</h3>
-            <p id="confirmation-message"></p>
-            <p class="demo-payment-note" id="order-success-note">We're checking your payment with Paystack…</p>
-            <button class="button button-dark checkout-button" id="finish-checkout" type="button">Back to the bookshop</button>
-          </section>
-        </section>
       </aside>
     </div>
 

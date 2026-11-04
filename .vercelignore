@@ -1,0 +1,7 @@
+.env
+.env.*
+data/
+server.test.js
+.git/
+.vercel/
+node_modules/

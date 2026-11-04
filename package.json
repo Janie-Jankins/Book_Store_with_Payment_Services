@@ -2,12 +2,12 @@
   "name": "chapter-and-co-storefront",
   "version": "1.0.0",
   "private": true,
-  "description": "Chapter & Co. storefront with Paystack Checkout",
+  "description": "Chapter & Co. storefront with Shopify checkout",
   "engines": {
     "node": ">=20.6"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.js",
+    "start": "node --env-file-if-exists=.env.local --env-file-if-exists=.env server.js",
     "test": "node --test"
   }
 }
