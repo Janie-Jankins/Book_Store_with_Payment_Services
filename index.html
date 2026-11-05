@@ -98,6 +98,21 @@
           <button class="category-chip active" type="button" data-category="All" aria-pressed="true">All books</button>
         </div>
 
+        <div class="catalog-toolbar">
+          <p id="catalog-count" aria-live="polite">Loading books…</p>
+          <div class="catalog-actions">
+            <label class="sort-label" for="book-sort">Sort by
+              <select id="book-sort">
+                <option value="featured">Featured</option>
+                <option value="title">Title A–Z</option>
+                <option value="price-asc">Price: low to high</option>
+                <option value="price-desc">Price: high to low</option>
+              </select>
+            </label>
+            <button class="surprise-button" id="surprise-pick" type="button">Surprise me <span aria-hidden="true">✦</span></button>
+          </div>
+        </div>
+
         <div class="book-grid" id="book-grid" aria-live="polite"></div>
         <p class="empty-state" id="empty-state" role="status">Our catalog is loading. If this message stays, please enable JavaScript and refresh.</p>
       </section>
@@ -148,14 +163,25 @@
         <div class="cart-empty" id="cart-empty">
           <span class="empty-book" aria-hidden="true">✳</span>
           <h3>A good story starts here.</h3>
-          <p>Your bag is waiting for its first book.</p>
+          <p>Your bag is waiting for its first book. You can still try a sample checkout below.</p>
           <button class="button button-outline" id="continue-shopping" type="button">Find a book</button>
         </div>
         <div class="cart-footer" id="cart-footer">
-          <div class="subtotal-row"><span>Subtotal</span><strong id="cart-subtotal">R0.00</strong></div>
-          <p class="shipping-detail">Shipping and payment are handled securely by Shopify.</p>
-          <button class="button button-dark checkout-button" id="checkout-button" type="button">Continue to secure checkout <span aria-hidden="true">→</span></button>
-          <span class="secure-note">Secure checkout powered by Shopify.</span>
+          <div class="subtotal-row"><span id="order-total-label">Sample demo order</span><strong id="cart-subtotal">R100.00</strong></div>
+          <p class="demo-payment-note">Test only: no card details are collected and no money is charged. Choose either outcome to email a simulation notice.</p>
+          <form class="checkout-form" id="simulation-checkout-form">
+            <label for="customer-name">Your name
+              <input id="customer-name" name="customerName" type="text" autocomplete="name" maxlength="100" required />
+            </label>
+            <label for="customer-email">Your email
+              <input id="customer-email" name="customerEmail" type="email" autocomplete="email" maxlength="254" required />
+            </label>
+            <div class="simulation-actions">
+              <button class="button button-dark checkout-button" type="submit" name="outcome" value="success">Simulate success</button>
+              <button class="button button-outline checkout-button" type="submit" name="outcome" value="failed">Simulate failure</button>
+            </div>
+          </form>
+          <p class="checkout-error" id="simulation-message" role="status" aria-live="polite"></p>
         </div>
       </aside>
     </div>

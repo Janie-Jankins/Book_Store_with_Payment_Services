@@ -9,6 +9,11 @@ const cartEmpty = document.querySelector("#cart-empty");
 const cartFooter = document.querySelector("#cart-footer");
 const toast = document.querySelector("#toast");
 const categoryRow = document.querySelector(".category-row");
+const sortSelect = document.querySelector("#book-sort");
+const catalogCount = document.querySelector("#catalog-count");
+const favorites = new Set(loadFavoriteIds());
+const simulationForm = document.querySelector("#simulation-checkout-form");
+const simulationMessage = document.querySelector("#simulation-message");
 let activeCategory = "All";
 let cart = null;
 let toastTimer;
@@ -58,10 +63,12 @@ async function apiRequest(path, options = {}) {
 }
 
 function safeImageUrl(image) {
-  if (!image?.url) return "";
+  const imageUrl = typeof image === "string" ? image : image?.url;
+  if (!imageUrl) return "";
   try {
-    const url = new URL(image.url);
-    return url.protocol === "https:" && url.hostname === "cdn.shopify.com"
+    const url = new URL(imageUrl);
+    return url.protocol === "https:" &&
+      url.hostname === "covers.openlibrary.org"
       ? url.href
       : "";
   } catch {
@@ -70,11 +77,26 @@ function safeImageUrl(image) {
 }
 
 function productCategory(product) {
-  return product.productType?.trim() || product.tags?.[0] || "Books";
+  return product.genre?.trim() || "Books";
 }
 
-function availableVariant(product) {
-  return product.variants.nodes.find((variant) => variant.availableForSale);
+function loadFavoriteIds() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("chapter-co-favorites") || "[]");
+    return Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : [];
+  } catch (error) {
+    console.error("Could not load saved favorites:", error);
+    return [];
+  }
+}
+
+function saveFavoriteIds() {
+  try {
+    localStorage.setItem("chapter-co-favorites", JSON.stringify([...favorites]));
+  } catch (error) {
+    console.error("Could not save favorites:", error);
+    showToast("Favorites could not be saved on this device.");
+  }
 }
 
 function renderCategories() {
@@ -91,31 +113,44 @@ function renderBooks(message) {
   const searchTerm = searchInput.value.trim().toLowerCase();
   const visibleProducts = products.filter((product) => {
     const matchesCategory = activeCategory === "All" || productCategory(product) === activeCategory;
-    const searchableText = `${product.title} ${product.vendor || ""} ${productCategory(product)} ${product.description || ""}`;
+    const searchableText = `${product.title} ${product.author} ${productCategory(product)} ${product.description}`;
     return matchesCategory && searchableText.toLowerCase().includes(searchTerm);
+  });
+  const sortMode = sortSelect.value;
+  visibleProducts.sort((left, right) => {
+    if (sortMode === "price-asc") return Number(left.price) - Number(right.price);
+    if (sortMode === "price-desc") return Number(right.price) - Number(left.price);
+    if (sortMode === "title") return left.title.localeCompare(right.title);
+    return Number(right.featured) - Number(left.featured) || left.title.localeCompare(right.title);
   });
 
   bookGrid.innerHTML = visibleProducts.map((product) => {
-    const variant = availableVariant(product);
-    const price = formatMoney(variant?.price || product.priceRange.minVariantPrice);
-    const imageUrl = safeImageUrl(product.featuredImage);
+    const price = formatMoney({ amount: product.price, currencyCode: product.currency });
+    const imageUrl = safeImageUrl(product.coverUrl);
+    const theme = ["cream", "berry", "dark", "leaf", "pink", "bloom", "sky", "sun"].includes(product.coverTheme)
+      ? product.coverTheme
+      : "cream";
+    const isFavorite = favorites.has(product.id);
     const image = imageUrl
-      ? `<img class="book-cover-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(product.featuredImage.altText || product.title)}" loading="lazy" />`
-      : `<div class="book-cover"><span class="cover-kicker">${escapeHtml(product.vendor || "Chapter & Co.")}</span><span class="cover-shape" aria-hidden="true"></span><span class="cover-title">${escapeHtml(product.title)}</span><span class="cover-author">${escapeHtml(product.vendor || "")}</span></div>`;
-    const addButton = variant
-      ? `<button class="quick-add" type="button" data-add="${escapeHtml(variant.id)}" data-title="${escapeHtml(product.title)}" aria-label="Add ${escapeHtml(product.title)} to bag">Add to bag — ${escapeHtml(price)}</button>`
+      ? `<img class="book-cover-image" data-cover-fallback="${theme}" src="${escapeHtml(imageUrl)}" alt="Cover of ${escapeHtml(product.title)}" loading="lazy" />`
+      : `<div class="book-cover cover-${theme}" role="img" aria-label="Illustrated cover for ${escapeHtml(product.title)}"><span class="cover-kicker">${escapeHtml(product.author)}</span><span class="cover-shape" aria-hidden="true"></span><span class="cover-title">${escapeHtml(product.title)}</span><span class="cover-author">${escapeHtml(product.author)}</span></div>`;
+    const addButton = product.stockCount > 0
+      ? `<button class="quick-add" type="button" data-add="${escapeHtml(product.id)}" data-title="${escapeHtml(product.title)}" aria-label="Add ${escapeHtml(product.title)} to bag">Add to bag — ${escapeHtml(price)}</button>`
       : `<button class="quick-add" type="button" disabled>Sold out</button>`;
 
     return `
-      <article class="book-card">
+      <article class="book-card${product.featured ? " is-featured" : ""}" data-book="${escapeHtml(product.id)}">
         <div class="book-cover-wrap">
           ${image}
+          <span class="book-badge">${product.kind === "fictional" ? "Fictional demo" : "Published book"}</span>
+          <button class="favorite-button${isFavorite ? " is-favorite" : ""}" type="button" data-favorite="${escapeHtml(product.id)}" aria-label="${isFavorite ? "Remove from" : "Add to"} favorites" aria-pressed="${isFavorite}">♥</button>
           ${addButton}
         </div>
         <div class="book-info">
           <span class="book-category">${escapeHtml(productCategory(product))}</span>
           <h3>${escapeHtml(product.title)}</h3>
-          ${product.vendor ? `<p class="book-author">by ${escapeHtml(product.vendor)}</p>` : ""}
+          <p class="book-author">by ${escapeHtml(product.author)}</p>
+          <p class="book-description">${escapeHtml(product.description)}</p>
           <div class="book-meta">
             <span class="book-price">${escapeHtml(price)}</span>
           </div>
@@ -124,6 +159,20 @@ function renderBooks(message) {
     `;
   }).join("");
 
+  bookGrid.querySelectorAll("img[data-cover-fallback]").forEach((image) => {
+    image.addEventListener("error", () => {
+      const card = image.closest(".book-card");
+      const product = products.find((book) => book.id === card.dataset.book);
+      if (!product) return;
+      const fallback = document.createElement("div");
+      fallback.className = `book-cover cover-${image.dataset.coverFallback}`;
+      fallback.setAttribute("role", "img");
+      fallback.setAttribute("aria-label", `Illustrated cover for ${product.title}`);
+      fallback.innerHTML = `<span class="cover-kicker">${escapeHtml(product.author)}</span><span class="cover-shape" aria-hidden="true"></span><span class="cover-title">${escapeHtml(product.title)}</span><span class="cover-author">${escapeHtml(product.author)}</span>`;
+      image.replaceWith(fallback);
+    }, { once: true });
+  });
+  catalogCount.textContent = `${visibleProducts.length} ${visibleProducts.length === 1 ? "book" : "books"}`;
   emptyState.textContent = message || (products.length === 0
     ? "Our shelves are being stocked. Please check back soon."
     : "No books found. Try another search.");
@@ -158,11 +207,13 @@ function renderCart() {
     `;
   }).join("");
 
-  document.querySelector("#cart-subtotal").textContent =
-    formatMoney(cart?.cost.subtotalAmount) || formatMoney({ amount: "0", currencyCode: "ZAR" });
+  document.querySelector("#order-total-label").textContent =
+    quantity > 0 ? "Cart total (simulation only)" : "Sample demo order";
+  document.querySelector("#cart-subtotal").textContent = quantity > 0
+    ? formatMoney(cart?.cost.subtotalAmount)
+    : formatMoney({ amount: "100.00", currencyCode: "ZAR" });
   cartEmpty.classList.toggle("visible", quantity === 0);
-  cartFooter.classList.toggle("empty", quantity === 0);
-  document.querySelector("#checkout-button").disabled = quantity === 0;
+  cartFooter.classList.remove("empty");
 }
 
 async function loadProducts() {
@@ -172,7 +223,7 @@ async function loadProducts() {
     renderCategories();
     renderBooks();
   } catch (error) {
-    console.error("Could not load Shopify products:", error);
+    console.error("Could not load the bookstore catalog:", error);
     renderBooks(error.message);
   }
 }
@@ -195,9 +246,27 @@ async function addToCart(merchandiseId, title) {
     renderCart();
     showToast(`${title} added to your bag`);
   } catch (error) {
-    console.error("Could not add Shopify product to cart:", error);
+    console.error("Could not add book to cart:", error);
     showToast(error.message);
   }
+}
+
+function surpriseMe() {
+  const searchTerm = searchInput.value.trim().toLowerCase();
+  const choices = products.filter((product) =>
+    (activeCategory === "All" || productCategory(product) === activeCategory) &&
+    `${product.title} ${product.author} ${productCategory(product)} ${product.description}`
+      .toLowerCase().includes(searchTerm),
+  );
+  if (!choices.length) {
+    showToast("No books match your current filters.");
+    return;
+  }
+  const choice = choices[Math.floor(Math.random() * choices.length)];
+  const card = bookGrid.querySelector(`[data-book="${CSS.escape(choice.id)}"]`);
+  card?.scrollIntoView({ behavior: "smooth", block: "center" });
+  card?.classList.add("surprise-highlight");
+  setTimeout(() => card?.classList.remove("surprise-highlight"), 1800);
 }
 
 async function changeQuantity(lineId, change) {
@@ -216,7 +285,7 @@ async function changeQuantity(lineId, change) {
     cart = result.cart;
     renderCart();
   } catch (error) {
-    console.error("Could not update Shopify cart:", error);
+    console.error("Could not update bookstore cart:", error);
     showToast(error.message);
   }
 }
@@ -228,6 +297,32 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove("show"), 2800);
 }
 
+async function simulatePayment(outcome) {
+  const buttons = simulationForm.querySelectorAll("button[type='submit']");
+  buttons.forEach((button) => { button.disabled = true; });
+  simulationMessage.textContent = "Sending simulation notification…";
+  simulationMessage.classList.remove("simulation-success");
+  try {
+    const result = await apiRequest("/api/simulated-payment", {
+      method: "POST",
+      body: JSON.stringify({
+        outcome,
+        customerName: simulationForm.elements.customerName.value,
+        customerEmail: simulationForm.elements.customerEmail.value,
+      }),
+    });
+    simulationMessage.textContent = outcome === "success"
+      ? `SIMULATED SUCCESS — no money was charged. Notification sent (${result.orderId}). If you don't see it, check your spam or junk folder.`
+      : `SIMULATED FAILURE — no money was charged. Notification sent (${result.orderId}). If you don't see it, check your spam or junk folder.`;
+    simulationMessage.classList.add("simulation-success");
+  } catch (error) {
+    console.error("Could not send simulated payment notification:", error);
+    simulationMessage.textContent = error.message;
+  } finally {
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
 async function openCart() {
   cartOverlay.hidden = false;
   document.body.style.overflow = "hidden";
@@ -235,7 +330,7 @@ async function openCart() {
   try {
     await refreshCart();
   } catch (error) {
-    console.error("Could not load Shopify cart:", error);
+    console.error("Could not load bookstore cart:", error);
     showToast(error.message);
   }
 }
@@ -258,7 +353,19 @@ categoryRow.addEventListener("click", (event) => {
   renderBooks();
 });
 
+sortSelect.addEventListener("change", () => renderBooks());
+document.querySelector("#surprise-pick").addEventListener("click", surpriseMe);
+
 bookGrid.addEventListener("click", (event) => {
+  const favoriteButton = event.target.closest("[data-favorite]");
+  if (favoriteButton) {
+    const bookId = favoriteButton.dataset.favorite;
+    if (favorites.has(bookId)) favorites.delete(bookId);
+    else favorites.add(bookId);
+    saveFavoriteIds();
+    renderBooks();
+    return;
+  }
   const button = event.target.closest("[data-add]");
   if (button) addToCart(button.dataset.add, button.dataset.title);
 });
@@ -295,21 +402,9 @@ searchInput.addEventListener("input", () => {
   }
 });
 
-document.querySelector("#checkout-button").addEventListener("click", () => {
-  if (!cart?.checkoutUrl) return;
-  try {
-    const checkoutUrl = new URL(cart.checkoutUrl);
-    if (checkoutUrl.protocol !== "https:" ||
-        !(checkoutUrl.hostname.endsWith(".myshopify.com") ||
-          checkoutUrl.hostname === "shop.app" ||
-          checkoutUrl.hostname.endsWith(".shopify.com"))) {
-      throw new Error("Shopify returned an unexpected checkout address.");
-    }
-    window.location.assign(checkoutUrl.href);
-  } catch (error) {
-    console.error("Could not open Shopify checkout:", error);
-    showToast(error.message);
-  }
+simulationForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  simulatePayment(event.submitter.value);
 });
 
 document.querySelector("#newsletter-form").addEventListener("submit", (event) => {
@@ -323,5 +418,5 @@ renderBooks("Loading books…");
 renderCart();
 loadProducts();
 refreshCart().catch((error) => {
-  console.error("Could not restore Shopify cart:", error);
+  console.error("Could not restore bookstore cart:", error);
 });

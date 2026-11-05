@@ -4,106 +4,6 @@ const path = require("node:path");
 
 const ROOT = __dirname;
 const MAX_BODY_BYTES = 16 * 1024;
-const API_VERSION = "2026-10";
-const CART_FRAGMENT = `
-  fragment CartFields on Cart {
-    id
-    checkoutUrl
-    totalQuantity
-    cost {
-      subtotalAmount { amount currencyCode }
-      totalAmount { amount currencyCode }
-    }
-    lines(first: 100) {
-      nodes {
-        id
-        quantity
-        merchandise {
-          ... on ProductVariant {
-            id
-            title
-            price { amount currencyCode }
-            product { title handle }
-            image { url altText }
-          }
-        }
-        cost { totalAmount { amount currencyCode } }
-      }
-    }
-  }
-`;
-const PRODUCTS_QUERY = `
-  query Products($first: Int!, $after: String) {
-    products(first: $first, after: $after) {
-      nodes {
-        id
-        title
-        handle
-        description
-        productType
-        vendor
-        tags
-        availableForSale
-        priceRange { minVariantPrice { amount currencyCode } }
-        featuredImage { url altText width height }
-        variants(first: 10) {
-          nodes {
-            id
-            title
-            availableForSale
-            price { amount currencyCode }
-          }
-        }
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-    }
-  }
-`;
-const GET_CART_QUERY = `
-  query Cart($cartId: ID!) {
-    cart(id: $cartId) { ...CartFields }
-  }
-  ${CART_FRAGMENT}
-`;
-const CREATE_CART_MUTATION = `
-  mutation CartCreate {
-    cartCreate(input: {}) {
-      cart { ...CartFields }
-      userErrors { message }
-    }
-  }
-  ${CART_FRAGMENT}
-`;
-const ADD_TO_CART_MUTATION = `
-  mutation CartLinesAdd($cartId: ID!, $lines: [CartLineInput!]!) {
-    cartLinesAdd(cartId: $cartId, lines: $lines) {
-      cart { ...CartFields }
-      userErrors { message }
-    }
-  }
-  ${CART_FRAGMENT}
-`;
-const UPDATE_CART_MUTATION = `
-  mutation CartLinesUpdate($cartId: ID!, $lines: [CartLineUpdateInput!]!) {
-    cartLinesUpdate(cartId: $cartId, lines: $lines) {
-      cart { ...CartFields }
-      userErrors { message }
-    }
-  }
-  ${CART_FRAGMENT}
-`;
-const REMOVE_FROM_CART_MUTATION = `
-  mutation CartLinesRemove($cartId: ID!, $lineIds: [ID!]!) {
-    cartLinesRemove(cartId: $cartId, lineIds: $lineIds) {
-      cart { ...CartFields }
-      userErrors { message }
-    }
-  }
-  ${CART_FRAGMENT}
-`;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -144,86 +44,105 @@ function sendJson(response, status, body) {
 function cartIdFromRequest(request) {
   const cookie = request.headers.cookie || "";
   const entry = cookie.split(";").map((part) => part.trim())
-    .find((part) => part.startsWith("shopifyCartId="));
+    .find((part) => part.startsWith("bookCartId="));
   if (!entry) return undefined;
-  try {
-    return decodeURIComponent(entry.slice("shopifyCartId=".length));
-  } catch {
-    return undefined;
-  }
+  const cartId = entry.slice("bookCartId=".length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cartId)
+    ? cartId
+    : undefined;
 }
 
 function setCartCookie(request, response, cartId, clear = false, vercel = false) {
   const secure = vercel || request.headers["x-forwarded-proto"] === "https";
   const cookie = clear
-    ? "shopifyCartId=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
-    : `shopifyCartId=${encodeURIComponent(cartId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`;
+    ? "bookCartId=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    : `bookCartId=${encodeURIComponent(cartId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`;
   response.setHeader("Set-Cookie", secure ? `${cookie}; Secure` : cookie);
+}
+
+function validEmail(value) {
+  return typeof value === "string" && value.length <= 254 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function createServer({
   env = process.env,
   fetchImpl = fetch,
   logger = console,
+  databaseQuery: injectedDatabaseQuery,
 } = {}) {
-  async function shopifyFetch(query, variables = {}) {
-    const domain = env.SHOPIFY_STORE_DOMAIN;
-    const token = env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
-    if (!domain || !token) {
-      throw new HttpError(503, "Shopify storefront is not configured.");
+  let neonClient;
+  async function queryDatabase(query, parameters = []) {
+    if (injectedDatabaseQuery) return injectedDatabaseQuery(query, parameters);
+    if (!env.DATABASE_URL) {
+      throw new HttpError(503, "The bookstore database is not configured.");
     }
-    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(domain)) {
-      throw new HttpError(503, "Shopify store domain is invalid.");
-    }
-
-    let response;
     try {
-      response = await fetchImpl(`https://${domain}/api/${API_VERSION}/graphql.json`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Storefront-Access-Token": token,
-        },
-        body: JSON.stringify({ query, variables }),
-      });
+      if (!neonClient) {
+        const { neon } = require("@neondatabase/serverless");
+        neonClient = neon(env.DATABASE_URL);
+      }
+      return await neonClient.query(query, parameters);
     } catch (error) {
-      logger.error("Shopify Storefront API request failed:", error.message);
-      throw new HttpError(502, "Could not connect to Shopify. Please try again.");
+      const message = String(error.message || "Database request failed.")
+        .replaceAll(env.DATABASE_URL, "[redacted]")
+        .slice(0, 300);
+      logger.error("Bookstore database request failed:", message);
+      throw new HttpError(503, "The bookstore database is temporarily unavailable.");
     }
-
-    let result;
-    try {
-      result = await response.json();
-    } catch (error) {
-      logger.error("Shopify Storefront API returned invalid JSON:", response.status);
-      throw new HttpError(502, "Shopify returned an invalid response.");
-    }
-    if (!response.ok || result.errors?.length) {
-      const messages = (result.errors || []).map((entry) => entry.message);
-      logger.error("Shopify Storefront API returned an error:", response.status, messages);
-      throw new HttpError(502, "Shopify couldn't complete this request. Please try again.");
-    }
-    return result.data;
   }
 
-  async function createCart() {
-    const result = await shopifyFetch(CREATE_CART_MUTATION);
-    const payload = result.cartCreate;
-    if (payload.userErrors.length) {
-      throw new HttpError(400, payload.userErrors.map((error) => error.message).join(" "));
+  async function databaseCartById(cartId, request, response) {
+    const rows = await queryDatabase(
+      `SELECT b.slug, b.title, b.author, b.price::text AS price, b.currency,
+              b.cover_url, b.stock_count, ci.quantity
+       FROM bookstore_carts c
+       LEFT JOIN bookstore_cart_items ci ON ci.cart_id = c.id
+       LEFT JOIN bookstore_books b ON b.slug = ci.book_id
+       WHERE c.id = $1::uuid
+       ORDER BY b.title`,
+      [cartId],
+    );
+    if (!rows.length) {
+      if (request && response) setCartCookie(request, response, "", true, env.VERCEL);
+      return null;
     }
-    return payload.cart;
+
+    const lines = rows.filter((row) => row.slug).map((row) => {
+      const amount = (Number(row.price) * row.quantity).toFixed(2);
+      return {
+        id: row.slug,
+        quantity: row.quantity,
+        merchandise: {
+          title: "Default Title",
+          product: { title: row.title, handle: row.slug, vendor: row.author },
+          image: row.cover_url ? { url: row.cover_url, altText: row.title } : null,
+          price: { amount: row.price, currencyCode: row.currency },
+        },
+        cost: { totalAmount: { amount, currencyCode: row.currency } },
+      };
+    });
+    const totalQuantity = lines.reduce((total, line) => total + line.quantity, 0);
+    const amountCents = lines.reduce(
+      (total, line) => total + Math.round(Number(line.cost.totalAmount.amount) * 100),
+      0,
+    );
+    const totalAmount = (amountCents / 100).toFixed(2);
+    return {
+      id: cartId,
+      totalQuantity,
+      lines: { nodes: lines },
+      cost: {
+        subtotalAmount: { amount: totalAmount, currencyCode: "ZAR" },
+        totalAmount: { amount: totalAmount, currencyCode: "ZAR" },
+      },
+    };
   }
 
   async function cartForRequest(request, response) {
     const cartId = cartIdFromRequest(request);
     if (!cartId) return null;
-    const result = await shopifyFetch(GET_CART_QUERY, { cartId });
-    if (!result.cart) {
-      setCartCookie(request, response, "", true, env.VERCEL);
-      return null;
-    }
-    return result.cart;
+    return databaseCartById(cartId, request, response);
   }
 
   return http.createServer(async (request, response) => {
@@ -231,30 +150,106 @@ function createServer({
     response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     try {
       const requestUrl = new URL(request.url, "http://localhost");
+      if (requestUrl.pathname === "/api/simulated-payment" && request.method === "POST") {
+        const body = await readJson(request);
+        const customerName = typeof body?.customerName === "string" ? body.customerName.trim() : "";
+        const customerEmail = body?.customerEmail;
+        if (!["success", "failed"].includes(body?.outcome) ||
+            !customerName || customerName.length > 100 ||
+            !validEmail(customerEmail)) {
+          throw new HttpError(400, "Enter your name and a valid email address, then choose a simulation outcome.");
+        }
+
+        const {
+          EMAILJS_SERVICE_ID: serviceId,
+          EMAILJS_TEMPLATE_ID: templateId,
+          EMAILJS_PUBLIC_KEY: publicKey,
+          EMAILJS_PRIVATE_KEY: privateKey,
+        } = env;
+        if (!serviceId || !templateId || !publicKey || !privateKey) {
+          throw new HttpError(503, "EmailJS notifications are not configured.");
+        }
+
+        const cart = await cartForRequest(request, response);
+        const lines = cart?.lines?.nodes || [];
+        const order = lines.length
+          ? {
+            items: lines.map((line) =>
+              `${line.merchandise.product.title} × ${line.quantity} — ${line.cost.totalAmount.amount} ${line.cost.totalAmount.currencyCode}`,
+            ).join("\n"),
+            total: cart.cost.subtotalAmount.amount,
+            currency: cart.cost.subtotalAmount.currencyCode,
+          }
+          : {
+            items: "Sample demo book × 1 — 100.00 ZAR",
+            total: "100.00",
+            currency: "ZAR",
+          };
+        const orderId = `DEMO-${require("node:crypto").randomUUID()}`;
+        const templateParams = {
+          order_id: orderId,
+          customer_name: customerName,
+          customer_email: customerEmail.trim(),
+          payment_status: body.outcome === "success" ? "SIMULATED SUCCESS" : "SIMULATED FAILURE",
+          order_items: order.items,
+          order_total: order.total,
+          currency: order.currency,
+          payment_note: "DEMO ONLY. No payment was attempted and no money was charged.",
+        };
+
+        let emailResponse;
+        try {
+          emailResponse = await fetchImpl("https://api.emailjs.com/api/v1.0/email/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              service_id: serviceId,
+              template_id: templateId,
+              user_id: publicKey,
+              accessToken: privateKey,
+              template_params: templateParams,
+            }),
+          });
+        } catch (error) {
+          logger.error("EmailJS notification request failed:", error.message);
+          throw new HttpError(502, "Could not connect to EmailJS. Please try again.");
+        }
+        if (!emailResponse.ok) {
+          const errorDetail = await emailResponse.text();
+          const redactedDetail = [
+            serviceId,
+            templateId,
+            publicKey,
+            privateKey,
+            ...Object.values(templateParams),
+          ].reduce((detail, value) => detail.replaceAll(value, "[redacted]"), errorDetail);
+          logger.error(
+            "EmailJS rejected the simulation notification:",
+            emailResponse.status,
+            redactedDetail.slice(0, 500),
+          );
+          throw new HttpError(502, "EmailJS could not send the notification. Check its service and template settings.");
+        }
+
+        sendJson(response, 200, { orderId, outcome: body.outcome, notificationSent: true });
+        return;
+      }
+
       if (requestUrl.pathname === "/api/health" && request.method === "GET") {
-        await shopifyFetch("{ shop { name } }");
+        await queryDatabase("SELECT 1");
         sendJson(response, 200, { status: "ok" });
         return;
       }
 
       if (requestUrl.pathname === "/api/products" && request.method === "GET") {
-        const products = [];
-        let after = null;
-        while (true) {
-          const result = await shopifyFetch(PRODUCTS_QUERY, { first: 100, after });
-          const connection = result.products;
-          if (!connection || !Array.isArray(connection.nodes) || !connection.pageInfo) {
-            throw new HttpError(502, "Shopify returned an incomplete product catalog.");
-          }
-          products.push(...connection.nodes);
-          if (!connection.pageInfo.hasNextPage) break;
-          if (typeof connection.pageInfo.endCursor !== "string" ||
-              !connection.pageInfo.endCursor ||
-              connection.pageInfo.endCursor === after) {
-            throw new HttpError(502, "Shopify returned an incomplete product catalog.");
-          }
-          after = connection.pageInfo.endCursor;
-        }
+        const products = await queryDatabase(
+          `SELECT slug AS id, title, author, genre, description,
+                  price::text AS price, currency, kind, isbn,
+                  cover_url AS "coverUrl", cover_theme AS "coverTheme",
+                  featured, stock_count AS "stockCount"
+           FROM bookstore_books
+           ORDER BY featured DESC, title ASC`,
+        );
         sendJson(response, 200, { products });
         return;
       }
@@ -268,61 +263,84 @@ function createServer({
       if (requestUrl.pathname === "/api/cart/lines" && request.method === "POST") {
         const body = await readJson(request);
         if (!body || typeof body.merchandiseId !== "string" ||
-            body.merchandiseId.length > 512 ||
+            !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(body.merchandiseId) ||
             !Number.isInteger(body.quantity) ||
             body.quantity < 1 || body.quantity > 10) {
           throw new HttpError(400, "Choose an available book and a quantity between 1 and 10.");
         }
-        let cart = await cartForRequest(request, response);
-        if (!cart) {
-          cart = await createCart();
-          setCartCookie(request, response, cart.id, false, env.VERCEL);
+        const books = await queryDatabase(
+          "SELECT stock_count FROM bookstore_books WHERE slug = $1",
+          [body.merchandiseId],
+        );
+        if (!books.length || books[0].stock_count < 1) {
+          throw new HttpError(404, "This book is not available.");
         }
-        const result = await shopifyFetch(ADD_TO_CART_MUTATION, {
-          cartId: cart.id,
-          lines: [{ merchandiseId: body.merchandiseId, quantity: body.quantity }],
-        });
-        const payload = result.cartLinesAdd;
-        if (payload.userErrors.length) {
-          throw new HttpError(400, payload.userErrors.map((error) => error.message).join(" "));
+        let cartId = cartIdFromRequest(request);
+        if (!cartId) {
+          cartId = require("node:crypto").randomUUID();
+          await queryDatabase("INSERT INTO bookstore_carts (id) VALUES ($1::uuid)", [cartId]);
+          setCartCookie(request, response, cartId, false, env.VERCEL);
         }
-        sendJson(response, 200, { cart: payload.cart });
+        const existingLines = await queryDatabase(
+          "SELECT quantity FROM bookstore_cart_items WHERE cart_id = $1::uuid AND book_id = $2",
+          [cartId, body.merchandiseId],
+        );
+        const nextQuantity = (existingLines[0]?.quantity || 0) + body.quantity;
+        if (nextQuantity > Math.min(10, books[0].stock_count)) {
+          throw new HttpError(400, "The requested quantity exceeds the available demo stock.");
+        }
+        await queryDatabase(
+          `INSERT INTO bookstore_cart_items (cart_id, book_id, quantity)
+           VALUES ($1::uuid, $2, $3)
+           ON CONFLICT (cart_id, book_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+          [cartId, body.merchandiseId, nextQuantity],
+        );
+        await queryDatabase("UPDATE bookstore_carts SET updated_at = now() WHERE id = $1::uuid", [cartId]);
+        sendJson(response, 200, { cart: await databaseCartById(cartId) });
         return;
       }
 
       if (requestUrl.pathname === "/api/cart/lines" && request.method === "PATCH") {
         const body = await readJson(request);
-        if (!body || typeof body.id !== "string" || body.id.length > 512 ||
+        if (!body || typeof body.id !== "string" ||
+            !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(body.id) ||
             !Number.isInteger(body.quantity) || body.quantity < 0 || body.quantity > 10) {
           throw new HttpError(400, "Choose a valid cart line and quantity.");
         }
         const cartId = cartIdFromRequest(request);
         if (!cartId) throw new HttpError(404, "Your shopping bag is empty.");
+        const lines = await queryDatabase(
+          `SELECT b.stock_count
+           FROM bookstore_cart_items ci
+           JOIN bookstore_books b ON b.slug = ci.book_id
+           WHERE ci.cart_id = $1::uuid AND ci.book_id = $2`,
+          [cartId, body.id],
+        );
+        if (!lines.length) throw new HttpError(404, "That book is not in your bag.");
+        if (body.quantity > Math.min(10, lines[0].stock_count)) {
+          throw new HttpError(400, "The requested quantity exceeds the available demo stock.");
+        }
         if (body.quantity === 0) {
-          const result = await shopifyFetch(REMOVE_FROM_CART_MUTATION, {
-            cartId,
-            lineIds: [body.id],
-          });
-          const payload = result.cartLinesRemove;
-          if (payload.userErrors.length) {
-            throw new HttpError(400, payload.userErrors.map((error) => error.message).join(" "));
-          }
-          sendJson(response, 200, { cart: payload.cart });
-          return;
+          await queryDatabase(
+            "DELETE FROM bookstore_cart_items WHERE cart_id = $1::uuid AND book_id = $2",
+            [cartId, body.id],
+          );
+        } else {
+          await queryDatabase(
+            "UPDATE bookstore_cart_items SET quantity = $3 WHERE cart_id = $1::uuid AND book_id = $2",
+            [cartId, body.id, body.quantity],
+          );
         }
-        const result = await shopifyFetch(UPDATE_CART_MUTATION, {
-          cartId,
-          lines: [{ id: body.id, quantity: body.quantity }],
-        });
-        const payload = result.cartLinesUpdate;
-        if (payload.userErrors.length) {
-          throw new HttpError(400, payload.userErrors.map((error) => error.message).join(" "));
-        }
-        sendJson(response, 200, { cart: payload.cart });
+        await queryDatabase("UPDATE bookstore_carts SET updated_at = now() WHERE id = $1::uuid", [cartId]);
+        sendJson(response, 200, { cart: await databaseCartById(cartId) });
         return;
       }
 
       if (requestUrl.pathname === "/api/cart" && request.method === "DELETE") {
+        const cartId = cartIdFromRequest(request);
+        if (cartId) {
+          await queryDatabase("DELETE FROM bookstore_carts WHERE id = $1::uuid", [cartId]);
+        }
         setCartCookie(request, response, "", true, env.VERCEL);
         sendJson(response, 200, { cart: null });
         return;

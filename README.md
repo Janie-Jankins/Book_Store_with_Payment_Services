@@ -1,41 +1,64 @@
 # Chapter & Co.
 
-The storefront reads its product catalog, prices, availability, shopping cart,
-and checkout URL from Shopify. Product and cart requests use Shopify's
-Storefront GraphQL API; checkout and payment are completed on Shopify's hosted
-checkout.
+Chapter & Co. is a demo bookstore with a Neon Postgres catalog and persistent
+shopping carts. Checkout is a **simulation only**: it never requests card
+details or charges money.
 
-## Shopify setup
+## Catalog and bookstore features
 
-The Vercel Shopify sandbox is connected to the project's Preview and
-Development environments. Add products, variants, prices, images, and inventory
-to the Shopify store before expecting books to appear in the storefront. Books
-are grouped using Shopify's product type, with the first product tag as a
-fallback category. The storefront uses the product vendor as the author.
+The catalog contains 16 published books. ISBNs and cover images are sourced
+from Open Library; if a cover is unavailable, the storefront generates a
+matching illustrated fallback. The seed script removes the eight retired
+fictional demo titles and their cart lines, while leaving other database
+records untouched.
 
-The current sandbox catalog is empty. The storefront intentionally shows an
-empty-catalog message instead of the previous demo books until real Shopify
-products are added.
+The storefront includes genre filters, search, price/title sorting, a local
+favorites list, and a “Surprise me” pick. Cart lines, demo stock, and catalog
+records are stored in Neon. Each seed run upserts these listings without
+deleting other database records beyond those retired demo titles.
 
-Shopify sandboxes are for testing and cannot take live payments. When the store
-is ready for customers, claim or connect a real Shopify store in the Vercel
-Marketplace, verify its payment provider and checkout settings in Shopify, and
-connect that resource to the Production environment before deploying.
+The linked Vercel project already has a Neon database connected. To seed a
+specific environment, load that environment's `DATABASE_URL` and run:
+
+```powershell
+node --env-file=.env.preview.local scripts/seed-catalog.js
+```
+
+Change the env file to use the Development connection when seeding locally.
+Do not use Production credentials for demo data. The seed script creates
+`bookstore_books`, `bookstore_carts`, and `bookstore_cart_items`.
+
+## Simulated checkout and EmailJS
+
+The checkout can simulate success or failure. EmailJS sends a clearly marked
+notification to the email entered at checkout and copies the fixed store inbox.
+No payment is attempted and no money is collected.
+
+Set **To Email** to `{{customer_email}}` and **Cc** to the store notification
+address in the EmailJS template. The template uses `{{order_id}}`,
+`{{customer_name}}`, `{{customer_email}}`, `{{payment_status}}`,
+`{{order_items}}`, `{{order_total}}`, `{{currency}}`, and `{{payment_note}}`.
+Add `EMAILJS_SERVICE_ID`, `EMAILJS_TEMPLATE_ID`, `EMAILJS_PUBLIC_KEY`, and
+`EMAILJS_PRIVATE_KEY` to Vercel Preview environment variables. Keep the private
+key server-side; never expose it in browser code.
+
+After sending, customers are advised to check their spam or junk folder if the
+notification isn't visible. The free EmailJS plan has limits; see its
+[pricing](https://www.emailjs.com/pricing/). Keep Preview protected and never
+use the simulated checkout as a real payment system.
 
 ## Run locally
 
-1. Copy `.env.example` to `.env`, or run `vercel env pull .env.local --yes`
-   from the linked project to get the Shopify Development credentials.
-2. Keep Shopify access tokens private; do not commit `.env` or `.env.local`.
-3. Run `npm.cmd start` on Windows (or `npm start` elsewhere), then open
+1. Copy `.env.example` to `.env`, or pull Development variables with
+   `vercel env pull .env.local --yes`.
+2. Keep `.env`, `.env.local`, and all database/API credentials private.
+3. Install dependencies with `npm install`.
+4. Seed Development data with `npm run db:seed`.
+5. Run `npm.cmd start` on Windows (or `npm start` elsewhere), then open
    <http://localhost:8765>.
-
-The app fetches books from Shopify at `/api/products`. Cart IDs are stored in
-an HTTP-only, secure-in-production cookie. Shopify calculates cart totals,
-shipping, taxes, and checkout; the browser never submits prices.
 
 ## Tests
 
-Run `npm.cmd test` on Windows (or `npm test` elsewhere) to test Shopify product
-queries, cart operations, cookie handling, input validation, and error
+Run `npm.cmd test` on Windows (or `npm test` elsewhere) to test catalog reads,
+cart operations, EmailJS simulation validation and error handling, and API
 responses without making external requests.
